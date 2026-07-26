@@ -24,9 +24,31 @@ app/
 ├── extraction.py   # Text extraction from PDF/DOCX/TXT
 ├── llm.py          # LangChain chains: structured extraction + narrative generation
 └── matching.py     # Deterministic matching logic (skill/interest overlap, score)
+
+Dockerfile           # Container image definition (Python 3.11-slim + uvicorn)
+.dockerignore        # Excludes .env, .venv, data/, .git from the image
+requirements.txt
 ```
 
+## Environment Variables
+
+The app reads its configuration from a `.env` file in the project root (see
+`app/config.py`). Create one with:
+
+```
+GOOGLE_API_KEY=your-google-gemini-api-key
+GOOGLE_MODEL=gemini-3.5-flash
+```
+
+- `GOOGLE_API_KEY` — **required**. Get one from [Google AI Studio](https://aistudio.google.com/apikey).
+- `GOOGLE_MODEL` — optional, defaults to `gemini-3.5-flash` (Gemini's current free-tier model).
+- `DATABASE_URL` — optional, defaults to `sqlite:///./data/job_matcher.db`.
+
+`.env` is git-ignored and must never be committed — it holds a real API key.
+
 ## Setup
+
+### Option A: Local (venv)
 
 1. Create a virtual environment and install dependencies:
    ```
@@ -34,16 +56,31 @@ app/
    .venv\Scripts\activate
    pip install -r requirements.txt
    ```
-2. Add your Google Gemini API key to `.env`:
-   ```
-   GOOGLE_API_KEY=your-key-here
-   GOOGLE_MODEL=gemini-3.5-flash
-   ```
+2. Create `.env` as described above.
 3. Run the server:
    ```
    uvicorn app.main:app --reload
    ```
 4. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the interactive API docs.
+
+### Option B: Docker
+
+1. Create `.env` as described above.
+2. Build the image:
+   ```
+   docker build -t job-matcher .
+   ```
+3. Run the container, passing `.env` in at runtime (the API key is never baked
+   into the image — it's read from the host's `.env` only when the container
+   starts):
+   ```
+   docker run -d --rm --name job-matcher --env-file .env -p 8000:8000 job-matcher
+   ```
+4. Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the interactive API docs.
+5. Stop it with:
+   ```
+   docker stop job-matcher
+   ```
 
 ## API
 
@@ -57,11 +94,10 @@ app/
 
 ## Status: Work in Progress
 
-This is an early-stage project. Planned next steps:
+This is an early-stage project. Dockerization is done (see `Dockerfile` /
+`.dockerignore`). Next planned step:
 
 - **Architecture change**: reorient from a 1 CV vs 1 job-description match into a
   recruiter-style workflow — a pool of stored candidates matched against one job
   posting, using embedding-based retrieval + LLM reranking before running the
   detailed match on the top candidates.
-- **Dockerization**: containerize the app for easier deployment once the
-  architecture above settles.
