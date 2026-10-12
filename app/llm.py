@@ -1,10 +1,32 @@
 from functools import lru_cache
+from typing import Any
 
+from fastapi import HTTPException
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 
 from app.config import settings
 from app.schemas import CVProfile, JobProfile
+
+
+def _invoke_llm(chain, payload: dict) -> Any:
+    try:
+        return chain.invoke(payload)
+    except ChatGoogleGenerativeAIError as exc:
+        cause = exc.__cause__
+        if getattr(cause, "code", None) == 429:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Limite di richieste del modello Gemini raggiunto "
+                    f"(modello: {settings.google_model}). Riprova tra qualche minuto."
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Errore nella comunicazione con il modello Gemini: {exc}",
+        ) from exc
 
 
 @lru_cache
@@ -61,12 +83,12 @@ NARRATIVE_PROMPT = ChatPromptTemplate.from_messages(
 
 def extract_cv_profile(text: str) -> CVProfile:
     chain = CV_EXTRACTION_PROMPT | get_llm().with_structured_output(CVProfile)
-    return chain.invoke({"text": text})
+    return _invoke_llm(chain, {"text": text})
 
 
 def extract_job_profile(text: str) -> JobProfile:
     chain = JOB_EXTRACTION_PROMPT | get_llm().with_structured_output(JobProfile)
-    return chain.invoke({"text": text})
+    return _invoke_llm(chain, {"text": text})
 
 
 def generate_narrative(
@@ -78,7 +100,8 @@ def generate_narrative(
     punteggio_match: float,
 ) -> str:
     chain = NARRATIVE_PROMPT | get_llm(temperature=0.4)
-    response = chain.invoke(
+    response = _invoke_llm(
+        chain,
         {
             "cv_profile": cv_profile.model_dump_json(),
             "job_profile": job_profile.model_dump_json(),
@@ -86,6 +109,6 @@ def generate_narrative(
             "lacune_esperienza": lacune_esperienza,
             "allineamento_interessi": allineamento_interessi,
             "punteggio_match": punteggio_match,
-        }
+        },
     )
     return response.text()
