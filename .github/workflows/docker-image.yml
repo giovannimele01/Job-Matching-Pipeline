@@ -44,9 +44,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 2) Smoke test: the container must start and either
-      #    - still be running after 10s (services: APIs, web apps...), or
-      #    - have exited with code 0 (batch jobs, scripts...)
+      # 2) Smoke test: the container must actually answer GET /health with
+      #    {"status": "ok"} within a few seconds, not just stay alive.
       # GOOGLE_API_KEY reuses the same repository secret as the pytest job
       # (GOOGLE_MODEL/DATABASE_URL fall back to the defaults in app/config.py)
       - name: Container smoke test
@@ -54,23 +53,30 @@ jobs:
           IMAGE_TAG="${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
           echo "Testing image: $IMAGE_TAG"
 
-          docker run -d --name smoke-test -e GOOGLE_API_KEY="${{ secrets.GOOGLE_API_KEY }}" "$IMAGE_TAG"
-          sleep 10
+          docker run -d --name smoke-test -e GOOGLE_API_KEY="${{ secrets.GOOGLE_API_KEY }}" -p 8000:8000 "$IMAGE_TAG"
 
-          STATUS=$(docker inspect -f '{{.State.Status}}' smoke-test)
-          EXIT_CODE=$(docker inspect -f '{{.State.ExitCode}}' smoke-test)
+          echo "Waiting for /health to respond..."
+          SUCCESS=false
+          for i in $(seq 1 10); do
+            RESPONSE=$(curl -sf http://localhost:8000/health 2>/dev/null) || true
+            if [ -n "$RESPONSE" ] && echo "$RESPONSE" | jq -e '.status == "ok"' > /dev/null 2>&1; then
+              SUCCESS=true
+              break
+            fi
+            sleep 1
+          done
 
           echo "----- Container logs -----"
           docker logs smoke-test
           echo "--------------------------"
-          echo "Status: $STATUS | Exit code: $EXIT_CODE"
 
           docker rm -f smoke-test > /dev/null
 
-          if [ "$STATUS" = "running" ] || { [ "$STATUS" = "exited" ] && [ "$EXIT_CODE" = "0" ]; }; then
-            echo "✅ Smoke test passed"
+          if [ "$SUCCESS" = true ]; then
+            echo "Response: $RESPONSE"
+            echo "✅ Smoke test passed — /health responded with status ok"
           else
-            echo "❌ Smoke test failed"
+            echo "❌ Smoke test failed — /health never returned a healthy response"
             exit 1
           fi
 
