@@ -39,3 +39,26 @@ jobs:
         GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       run: |
         pytest
+    - name: Streamlit frontend smoke test
+      run: |
+        streamlit run streamlit_app.py --server.headless true --server.port 8501 &
+        STREAMLIT_PID=$!
+
+        echo "Waiting for the Streamlit frontend to open..."
+        SUCCESS=false
+        for i in $(seq 1 10); do
+          if curl -sf http://localhost:8501 > /dev/null; then
+            SUCCESS=true
+            break
+          fi
+          sleep 1
+        done
+
+        kill "$STREAMLIT_PID" 2>/dev/null || true
+
+        if [ "$SUCCESS" = true ]; then
+          echo "✅ Streamlit frontend opened successfully"
+        else
+          echo "❌ Streamlit frontend did not respond"
+          exit 1
+        fi
